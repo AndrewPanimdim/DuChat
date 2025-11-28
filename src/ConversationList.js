@@ -113,51 +113,99 @@ export default function ConversationList({ user, onSelectConversation }) {
   }
 }
 
-  const startDirectChat = async (otherUserId) => {
-    try {
-      // Check if conversation already exists
-      const { data: existingConvId } = await supabase
-        .rpc('get_direct_conversation', {
-          user1_id: user.id,
-          user2_id: otherUserId
-        })
+ const startDirectChat = async (otherUserId) => {
+  try {
+    console.log('Starting chat with user:', otherUserId)
+    
+    // First, check if a conversation already exists between these two users
+    // by querying conversation_participants directly
+    const { data: existingParticipants, error: participantsCheckError } = await supabase
+      .from('conversation_participants')
+      .select('conversation_id, conversations!inner(is_group)')
+      .or(`user_id.eq.${user.id},user_id.eq.${otherUserId}`)
+
+    if (participantsCheckError) {
+      console.error('Error checking participants:', participantsCheckError)
+    }
+
+    // Find a conversation where both users are participants and it's not a group
+    if (existingParticipants && existingParticipants.length > 0) {
+      const conversationCounts = {}
+      
+      existingParticipants.forEach(p => {
+        if (!p.conversations.is_group) {
+          conversationCounts[p.conversation_id] = (conversationCounts[p.conversation_id] || 0) + 1
+        }
+      })
+
+      // Find conversation with exactly 2 participants (both users)
+      const existingConvId = Object.keys(conversationCounts).find(
+        convId => conversationCounts[convId] === 2
+      )
 
       if (existingConvId) {
-        // Open existing conversation
+        console.log('Found existing 1-on-1 conversation:', existingConvId)
         onSelectConversation(existingConvId)
-      } else {
-        // Create new conversation
-        const { data: newConv, error: convError } = await supabase
-          .from('conversations')
-          .insert({
-            is_group: false,
-            name: null
-          })
-          .select()
-          .single()
-
-        if (convError) throw convError
-
-        // Add both users to conversation
-        const { error: participantsError } = await supabase
-          .from('conversation_participants')
-          .insert([
-            { conversation_id: newConv.id, user_id: user.id },
-            { conversation_id: newConv.id, user_id: otherUserId }
-          ])
-
-        if (participantsError) throw participantsError
-
-        // Open new conversation
-        onSelectConversation(newConv.id)
-        loadConversations() // Refresh list
+        setShowNewChatModal(false)
+        return
       }
-    } catch (error) {
-      console.error('Error starting chat:', error)
-      alert('Failed to start conversation')
     }
+
+    // No existing conversation found, create new one
+    console.log('Creating new conversation...')
+    const { data: newConv, error: convError } = await supabase
+      .from('conversations')
+      .insert({
+        is_group: false,
+        name: null
+      })
+      .select()
+      .single()
+
+    if (convError) {
+      console.error('Error creating conversation:', convError)
+      throw convError
+    }
+
+    console.log('New conversation created:', newConv.id)
+
+    // Add participants one at a time to better handle errors
+    const { error: participant1Error } = await supabase
+      .from('conversation_participants')
+      .insert({ conversation_id: newConv.id, user_id: user.id })
+
+    if (participant1Error) {
+      // Check if it's a duplicate error
+      if (!participant1Error.code?.includes('23505') && !participant1Error.message?.includes('duplicate')) {
+        console.error('Error adding first participant:', participant1Error)
+        throw participant1Error
+      }
+    }
+
+    const { error: participant2Error } = await supabase
+      .from('conversation_participants')
+      .insert({ conversation_id: newConv.id, user_id: otherUserId })
+
+    if (participant2Error) {
+      // Check if it's a duplicate error
+      if (!participant2Error.code?.includes('23505') && !participant2Error.message?.includes('duplicate')) {
+        console.error('Error adding second participant:', participant2Error)
+        throw participant2Error
+      }
+    }
+
+    console.log('Participants added successfully')
+
+    // Open new conversation
+    onSelectConversation(newConv.id)
+    await loadConversations()
     setShowNewChatModal(false)
+    
+  } catch (error) {
+    console.error('Full error starting chat:', error)
+    alert(`Failed to start conversation: ${error.message || 'Unknown error'}`)
   }
+}
 
   const createGroupChat = async () => {
     if (selectedUsers.length < 2) {
