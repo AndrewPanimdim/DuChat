@@ -4,8 +4,6 @@ import Auth from './Auth'
 import Chat from './Chat'
 import ConversationList from './ConversationList'
 
-const GLOBAL_CONVERSATION_ID = '00000000-0000-0000-0000-000000000001'
-
 function App() {
   const [session, setSession] = useState(null)
   const [selectedConversation, setSelectedConversation] = useState(null)
@@ -21,9 +19,6 @@ function App() {
       setSession(session)
       if (!session) {
         setSelectedConversation(null)
-      } else {
-        // Auto-select global chat when logging in
-        setSelectedConversation(GLOBAL_CONVERSATION_ID)
       }
     })
 
@@ -42,6 +37,7 @@ function App() {
     <div style={{ display: 'flex', height: '100vh' }}>
       <ConversationList 
         user={session.user} 
+        activeConversationId={selectedConversation}
         onSelectConversation={setSelectedConversation}
       />
       {selectedConversation ? (
